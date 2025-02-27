@@ -10,6 +10,10 @@ from app.api.content_routes import content_router
 from app.api.assessment_routes import assessment_router
 from app.api.adaptive_routes import adaptive_router
 from app.api.analytics_routes import analytics_router
+from app.api.notification_routes import notification_router
+
+# Add notification routes with authentication
+router.include_router(notification_router, prefix="/notifications", tags=["notifications"])
 
 # Add analytics routes with authentication
 router.include_router(analytics_router, prefix="/analytics", tags=["analytics"])
