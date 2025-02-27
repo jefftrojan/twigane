@@ -15,35 +15,21 @@ from app.api.i18n_routes import i18n_router
 from app.middleware.accessibility import AccessibilityMiddleware
 from app.api.mobile_routes import mobile_router
 
-# Add mobile routes with authentication
+# Create main router
+router = APIRouter()
+
+# Add sub-routers
 router.include_router(mobile_router, prefix="/mobile", tags=["mobile"])
-
-# Add i18n routes with authentication
 router.include_router(i18n_router, prefix="/i18n", tags=["i18n"])
-
-# Add accessibility middleware
-app.add_middleware(AccessibilityMiddleware)
-
-# Add notification routes with authentication
 router.include_router(notification_router, prefix="/notifications", tags=["notifications"])
-
-# Add analytics routes with authentication
 router.include_router(analytics_router, prefix="/analytics", tags=["analytics"])
-
-# Add adaptive learning routes with authentication
 router.include_router(adaptive_router, prefix="/adaptive", tags=["adaptive"])
-
-# Add assessment routes with authentication
 router.include_router(assessment_router, prefix="/assessment", tags=["assessment"])
-
-# Add content routes with authentication
 router.include_router(content_router, prefix="/content", tags=["content"])
-
-# Add profile routes with authentication
-router.include_router(profile_router, prefix="/profile", tags=["profile"])
-
-# Add auth routes without authentication middleware
 router.include_router(auth_router, prefix="/auth", tags=["authentication"])
+
+# Remove this line as middleware should be added in main.py
+# app.add_middleware(AccessibilityMiddleware)
 
 # Initialize services
 essay_service = EssayService()
@@ -101,18 +87,38 @@ async def update_user_session(
                 }
             }
         },
-        400: {"description": "Invalid file format or processing error"}
+        400: {"description": "Invalid file format or processing error"},
+        422: {"description": "Invalid file type or empty file"},
+        500: {"description": "Internal server error"}
     }
 )
 async def analyze_essay(
     file: UploadFile = File(..., description="Handwritten essay image file")
 ):
     try:
+        if not file.content_type.startswith('image/'):
+            raise HTTPException(
+                status_code=422,
+                detail="File must be an image"
+            )
+            
         contents = await file.read()
+        if not contents:
+            raise HTTPException(
+                status_code=422,
+                detail="Empty file provided"
+            )
+            
         result = await essay_service.process_handwritten_essay(contents)
         return result
+        
+    except HTTPException as he:
+        raise he
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=f"Internal server error: {str(e)}"
+        )
 
 @router.post("/chat/message",
     response_model=Dict,
@@ -150,14 +156,7 @@ async def analyze_emotion(text: str):
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-@router.post("/chat/message")
-async def chat_message(user_id: str, message: str):
-    try:
-        response = await chatbot_service.get_response(user_id, message)
-        return response
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
+# Remove the duplicate chat_message route that was here
 @router.post("/tts/generate")
 async def generate_speech(text: str):
     try:

@@ -3,32 +3,69 @@ from app.core.database import Database
 from fastapi import HTTPException
 import json
 from pathlib import Path
+from typing import Dict
 
 class I18nService:
     def __init__(self):
         self.db = Database.get_db()
         self.translations = self._load_translations()
-        self.supported_languages = ["rw", "en"]
 
-    def _load_translations(self) -> Dict:
+    async def _load_translations(self) -> Dict:
+        """Load translations from database"""
         translations = {}
-        translation_path = Path("/Users/mac/Downloads/main/twigane-backend/app/translations")
-        
-        for lang in ["rw", "en"]:
-            file_path = translation_path / f"{lang}.json"
-            if file_path.exists():
-                with open(file_path, "r", encoding="utf-8") as f:
-                    translations[lang] = json.load(f)
-        return translations
-
-    async def get_translation(self, key: str, lang: str = "rw") -> str:
-        if lang not in self.supported_languages:
-            lang = "rw"
-        
         try:
-            return self.translations[lang][key]
-        except KeyError:
-            return key
+            cursor = self.db.translations.find({})
+            async for doc in cursor:
+                lang = doc.get("language")
+                translations[lang] = doc.get("translations", {})
+            return translations
+        except Exception as e:
+            raise HTTPException(
+                status_code=500, 
+                detail=f"Failed to load translations: {str(e)}"
+            )
+
+    async def get_translation(self, key: str, language: str = "kin") -> str:
+        """Get translation for a specific key in given language"""
+        if language not in self.translations:
+            raise HTTPException(
+                status_code=404, 
+                detail=f"Language {language} not found"
+            )
+        
+        return self.translations[language].get(
+            key, 
+            self.translations["eng"].get(key, key)
+        )
+
+    async def add_translation(
+        self, 
+        language: str, 
+        key: str, 
+        value: str
+    ) -> Dict:
+        """Add or update a translation"""
+        try:
+            result = await self.db.translations.update_one(
+                {"language": language},
+                {"$set": {f"translations.{key}": value}},
+                upsert=True
+            )
+            
+            # Refresh translations cache
+            self.translations = await self._load_translations()
+            
+            return {
+                "status": "success",
+                "modified": result.modified_count > 0,
+                "language": language,
+                "key": key
+            }
+        except Exception as e:
+            raise HTTPException(
+                status_code=500, 
+                detail=f"Failed to add translation: {str(e)}"
+            )
 
     async def get_user_preferences(self, user_id: str) -> AccessibilityPreferences:
         prefs = await self.db.accessibility_preferences.find_one({"user_id": user_id})
