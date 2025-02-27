@@ -13,6 +13,10 @@ from app.api.analytics_routes import analytics_router
 from app.api.notification_routes import notification_router
 from app.api.i18n_routes import i18n_router
 from app.middleware.accessibility import AccessibilityMiddleware
+from app.api.mobile_routes import mobile_router
+
+# Add mobile routes with authentication
+router.include_router(mobile_router, prefix="/mobile", tags=["mobile"])
 
 # Add i18n routes with authentication
 router.include_router(i18n_router, prefix="/i18n", tags=["i18n"])
