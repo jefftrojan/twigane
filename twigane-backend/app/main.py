@@ -5,14 +5,19 @@ from app.api.routes import router
 from app.core.error_handler import ErrorHandler
 from app.middleware.auth import AuthMiddleware
 from fastapi.exceptions import RequestValidationError
+from app.core.docs import custom_openapi
+from app.middleware.accessibility import AccessibilityMiddleware
 
 app = FastAPI(
-    title="Twigane API",
+    title="Twigane Learning API",
     description="API for Twigane Learning Platform",
-    version="1.0.0"
+    version="1.0.0",
+    docs_url="/api/docs",
+    redoc_url="/api/redoc",
+    openapi_url="/api/openapi.json"
 )
 
-# Middleware
+# Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -20,6 +25,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Add accessibility middleware
+app.add_middleware(AccessibilityMiddleware)
+
+# Include routes
+app.include_router(router, prefix="/api")
+
+# Custom OpenAPI schema
+app.openapi = lambda: custom_openapi(app)
 
 # Error handlers
 app.add_exception_handler(RequestValidationError, ErrorHandler.validation_exception_handler)

@@ -80,12 +80,65 @@ async def update_user_session(
 ):
     return await user_service.update_session(user_id, chat_history, emotion_context)
 
-@router.post("/essay/analyze")
-async def analyze_essay(file: UploadFile = File(...)):
+@router.post("/essay/analyze", 
+    response_model=Dict,
+    summary="Analyze handwritten essay",
+    description="Analyzes a handwritten essay image and returns text extraction, translation, and analysis",
+    responses={
+        200: {
+            "description": "Successful analysis",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "original_text": "Sample essay text",
+                        "translated_text": "Translated essay text",
+                        "analysis": {
+                            "pros": ["Clear main idea"],
+                            "cons": ["Some grammar errors"],
+                            "suggestions": ["Consider using more transition words"]
+                        }
+                    }
+                }
+            }
+        },
+        400: {"description": "Invalid file format or processing error"}
+    }
+)
+async def analyze_essay(
+    file: UploadFile = File(..., description="Handwritten essay image file")
+):
     try:
         contents = await file.read()
         result = await essay_service.process_handwritten_essay(contents)
         return result
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@router.post("/chat/message",
+    response_model=Dict,
+    summary="Send chat message",
+    description="Send a message to the chatbot and get an AI-powered response",
+    responses={
+        200: {
+            "description": "Successful response",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "response": "Chatbot response",
+                        "emotion_context": {"emotion": "positive", "confidence": 0.9}
+                    }
+                }
+            }
+        }
+    }
+)
+async def chat_message(
+    user_id: str = Query(..., description="User ID"),
+    message: str = Query(..., description="Message text")
+):
+    try:
+        response = await chatbot_service.get_response(user_id, message)
+        return response
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
