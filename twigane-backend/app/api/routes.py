@@ -11,6 +11,14 @@ from app.api.assessment_routes import assessment_router
 from app.api.adaptive_routes import adaptive_router
 from app.api.analytics_routes import analytics_router
 from app.api.notification_routes import notification_router
+from app.api.i18n_routes import i18n_router
+from app.middleware.accessibility import AccessibilityMiddleware
+
+# Add i18n routes with authentication
+router.include_router(i18n_router, prefix="/i18n", tags=["i18n"])
+
+# Add accessibility middleware
+app.add_middleware(AccessibilityMiddleware)
 
 # Add notification routes with authentication
 router.include_router(notification_router, prefix="/notifications", tags=["notifications"])
