@@ -5,15 +5,35 @@ from app.services.emotion_service import EmotionService
 from app.services.chatbot_service import ChatbotService
 from app.services.tts_service import TextToSpeechService
 from app.services.user_service import UserService
+from app.api.auth_routes import auth_router
+from app.api.content_routes import content_router
+from app.api.assessment_routes import assessment_router
+from app.api.adaptive_routes import adaptive_router
+from app.api.analytics_routes import analytics_router
 
-router = APIRouter()
+# Add analytics routes with authentication
+router.include_router(analytics_router, prefix="/analytics", tags=["analytics"])
+
+# Add adaptive learning routes with authentication
+router.include_router(adaptive_router, prefix="/adaptive", tags=["adaptive"])
+
+# Add assessment routes with authentication
+router.include_router(assessment_router, prefix="/assessment", tags=["assessment"])
+
+# Add content routes with authentication
+router.include_router(content_router, prefix="/content", tags=["content"])
+
+# Add profile routes with authentication
+router.include_router(profile_router, prefix="/profile", tags=["profile"])
+
+# Add auth routes without authentication middleware
+router.include_router(auth_router, prefix="/auth", tags=["authentication"])
 
 # Initialize services
 essay_service = EssayService()
 emotion_service = EmotionService()
 chatbot_service = ChatbotService()
 tts_service = TextToSpeechService()
-
 user_service = UserService()
 
 @router.post("/user/progress")
