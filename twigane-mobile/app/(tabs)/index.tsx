@@ -14,6 +14,11 @@ import { FontAwesome5 } from "@expo/vector-icons";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { MaterialIcons } from "@expo/vector-icons";
 import * as Animatable from "react-native-animatable"; // Added for additional animations
+import { contentService } from '../../services/content';
+import { authService } from '../../services/auth';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { router } from 'expo-router';
+import { ActivityIndicator } from 'react-native';
 
 export default function TabOneScreen() {
   // Animation values
@@ -68,6 +73,51 @@ export default function TabOneScreen() {
     },
   ];
 
+  const [userProfile, setUserProfile] = useState(null);
+  const [learningPath, setLearningPath] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    loadInitialData();
+  }, []);
+
+  const loadInitialData = async () => {
+    try {
+      setLoading(true);
+      const token = await AsyncStorage.getItem('auth_token');
+      
+      if (token) {
+        const [profile, path] = await Promise.all([
+          authService.getProfile(),
+          contentService.getLearningPath()
+        ]);
+        
+        setUserProfile(profile);
+        setLearningPath(path);
+      }
+    } catch (error) {
+      setError(error.message);
+      console.error('Error loading data:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleStartLearning = async () => {
+    try {
+      const token = await AsyncStorage.getItem('auth_token');
+      if (!token) {
+        router.push('/(auth)/login');
+        return;
+      }
+      router.push('/learning');
+    } catch (error) {
+      console.error('Navigation error:', error);
+    }
+  };
+
+  // Update the CTA section in your return statement
   return (
     <ScrollView style={styles.scrollView}>
       <View style={styles.container}>
@@ -75,7 +125,7 @@ export default function TabOneScreen() {
         <View style={styles.heroContainer}>
           <RNView style={styles.heroGifContainer}>
             <Image
-              source={require("../../assets/images/learning.jpg")} // Replace with your actual GIF
+              source={require("../../assets/images/learning.jpg")} 
               style={styles.heroGif}
               resizeMode="contain"
             />
@@ -102,7 +152,7 @@ export default function TabOneScreen() {
           {/* Value proposition section */}
           <View style={styles.welcomeSection}>
             <Text style={styles.mainTitle}>
-              Learning Made Fun For Everyone!
+              {userProfile ? `Welcome back, ${userProfile.name}!` : 'Learning Made Fun For Everyone!'}
             </Text>
 
             <Text style={styles.description}>
@@ -246,67 +296,7 @@ export default function TabOneScreen() {
             </View>
           </View>
 
-          {/* Multiple testimonials in a carousel-style layout */}
-          <View style={styles.testimonialSection}>
-            <Text style={styles.sectionTitle}>Happy Learners</Text>
 
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              style={styles.testimonialCarousel}
-            >
-              <View style={styles.testimonialBubble}>
-                <View style={styles.quoteIconContainer}>
-                  <FontAwesome5
-                    name="quote-left"
-                    size={20}
-                    color="#FC8F12"
-                    style={styles.quoteIcon}
-                  />
-                </View>
-                <Text style={styles.testimonialText}>
-                  "Twigane helped me learn to read in a fun way! I love the
-                  colorful games!"
-                </Text>
-                <Text style={styles.testimonialAuthor}>
-                  - Maya, 8 years old
-                </Text>
-              </View>
-
-              <View style={styles.testimonialBubble}>
-                <View style={styles.quoteIconContainer}>
-                  <FontAwesome5
-                    name="quote-left"
-                    size={20}
-                    color="#FC8F12"
-                    style={styles.quoteIcon}
-                  />
-                </View>
-                <Text style={styles.testimonialText}>
-                  "As a parent of a child with ADHD, Twigane has been a
-                  game-changer. The short, engaging lessons keep my son focused
-                  and excited about learning."
-                </Text>
-                <Text style={styles.testimonialAuthor}>- Sarah, Parent</Text>
-              </View>
-
-              <View style={styles.testimonialBubble}>
-                <View style={styles.quoteIconContainer}>
-                  <FontAwesome5
-                    name="quote-left"
-                    size={20}
-                    color="#FC8F12"
-                    style={styles.quoteIcon}
-                  />
-                </View>
-                <Text style={styles.testimonialText}>
-                  "The audio stories and voice controls have made learning
-                  accessible for my visually impaired daughter. She's thriving!"
-                </Text>
-                <Text style={styles.testimonialAuthor}>- David, Parent</Text>
-              </View>
-            </ScrollView>
-          </View>
 
           {/* FAQ Section */}
           <View style={styles.faqSection}>
@@ -340,53 +330,21 @@ export default function TabOneScreen() {
             ))}
           </View>
 
-          {/* Educational partners section */}
-          <View style={styles.partnersSection}>
-            <Text style={styles.sectionTitle}>Our Educational Partners</Text>
-
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              style={styles.partnersScroll}
-            >
-              <View style={styles.partnerCard}>
-                <MaterialIcons name="school" size={40} color="#FC8F12" />
-                <Text style={styles.partnerName}>Sunshine Schools</Text>
-              </View>
-
-              <View style={styles.partnerCard}>
-                <MaterialCommunityIcons
-                  name="book-education"
-                  size={40}
-                  color="#4CAF50"
-                />
-                <Text style={styles.partnerName}>Learn Together</Text>
-              </View>
-
-              <View style={styles.partnerCard}>
-                <FontAwesome5 name="hands-helping" size={40} color="#FC8F12" />
-                <Text style={styles.partnerName}>Ability Alliance</Text>
-              </View>
-
-              <View style={styles.partnerCard}>
-                <MaterialCommunityIcons
-                  name="certificate"
-                  size={40}
-                  color="#4CAF50"
-                />
-                <Text style={styles.partnerName}>EdCert Institute</Text>
-              </View>
-            </ScrollView>
-          </View>
+          
 
           {/* Call to action with orange gradient button */}
           <View style={styles.ctaSection}>
             <Text style={styles.ctaTitle}>Ready to Start Learning?</Text>
             <Text style={styles.ctaSubtitle}>
-              Join thousands of happy families learning with Twigane today
+              {userProfile 
+                ? 'Continue your learning journey'
+                : 'Join thousands of happy families learning with Twigane today'}
             </Text>
 
-            <TouchableOpacity style={styles.ctaButton}>
+            <TouchableOpacity 
+              style={styles.ctaButton}
+              onPress={handleStartLearning}
+            >
               <LinearGradient
                 colors={["#FC8F12", "#FF6B00"]}
                 start={[0, 0]}
@@ -394,7 +352,7 @@ export default function TabOneScreen() {
                 style={styles.gradientButton}
               >
                 <Text style={styles.ctaButtonText}>
-                  Start Your Learning Journey
+                  {userProfile ? 'Continue Learning' : 'Start Your Learning Journey'}
                 </Text>
                 <Ionicons name="arrow-forward" size={24} color="#FFFFFF" />
               </LinearGradient>
@@ -439,7 +397,7 @@ const styles = StyleSheet.create({
   },
 
   heroTitle: {
-    fontSize: 48,
+    fontSize: 44,
     fontWeight: "bold",
     color: "#FC8F12",
     marginBottom: 10,
@@ -449,17 +407,17 @@ const styles = StyleSheet.create({
     textAlign: "center",
     fontSize: 16,
     color: "#555",
-    marginBottom: 25,
+    marginBottom: 16,
     lineHeight: 24,
   },
 
   contentSection: {
-    padding: 24,
+    padding: 20,
+    paddingTop: 0,
     backgroundColor: "transparent",
   },
   welcomeSection: {
     backgroundColor: "transparent",
-    marginTop: 5,
     marginBottom: 30,
     padding: 15,
     borderRadius: 16,

@@ -1,29 +1,111 @@
+import React, { useEffect, useState } from 'react';
 import { StyleSheet, ScrollView, Dimensions } from 'react-native';
 import { Text, View } from '@/components/Themed';
 import { LinearGradient } from "expo-linear-gradient";
-import { FontAwesome5, MaterialCommunityIcons } from "@expo/vector-icons";
+import { FontAwesome5 } from "@expo/vector-icons";
 import * as Animatable from "react-native-animatable";
+import { progressService } from '../../services/progress';
+import { ActivityIndicator } from 'react-native';
 
 const { width } = Dimensions.get('window');
 
+interface Subject {
+  name: string;
+  progress: number;
+  color: string;
+}
+
+interface Achievement {
+  title: string;
+  description: string;
+  icon: string;
+}
+
+interface ProgressData {
+  totalLessons: number;
+  completedLessons: number;
+  streakDays: number;
+  totalPoints: number;
+  recentAchievements: Achievement[];
+  subjects: Subject[];
+}
+
+// Add these interfaces after the existing interfaces
+interface Lesson {
+  _id: string;
+  title: string;
+  subject: string;
+}
+
+interface ProgressResponse {
+  _id: string;
+  lessonId: Lesson;
+  score: number;
+  timeSpent: number;
+  mistakes: number;
+}
+
 export default function ProgressScreen() {
-  const progressData = {
-    totalLessons: 48,
-    completedLessons: 32,
-    streakDays: 7,
-    totalPoints: 2450,
-    recentAchievements: [
-      { title: "Quick Learner", description: "Completed 5 lessons in one day", icon: "trophy" },
-      { title: "Math Wizard", description: "Perfect score in Mathematics", icon: "calculator" },
-      { title: "Reading Star", description: "Read 10 stories", icon: "book-reader" }
-    ],
-    subjects: [
-      { name: "Mathematics", progress: 75, color: "#FC8F12" },
-      { name: "Reading", progress: 60, color: "#4CAF50" },
-      { name: "Science", progress: 45, color: "#FC8F12" },
-      { name: "Language", progress: 80, color: "#4CAF50" }
-    ]
+  const [loading, setLoading] = useState(true);
+  const [progressData, setProgressData] = useState<ProgressData>({
+    totalLessons: 0,
+    completedLessons: 0,
+    streakDays: 0,
+    totalPoints: 0,
+    recentAchievements: [],
+    subjects: []
+  });
+
+  useEffect(() => {
+    loadProgressData();
+  }, []);
+
+  const loadProgressData = async () => {
+    try {
+      const [progressResponse, statsResponse] = await Promise.all([
+        progressService.getProgress(),
+        progressService.getLearningStats()
+      ]);
+
+      // Group progress by subject and calculate average scores
+      const subjectProgress = (progressResponse as ProgressResponse[]).reduce((acc, curr) => {
+        const subject = curr.lessonId.subject;
+        if (!acc[subject]) {
+          acc[subject] = { total: 0, count: 0 };
+        }
+        acc[subject].total += curr.score;
+        acc[subject].count += 1;
+        return acc;
+      }, {} as Record<string, { total: number; count: number }>);
+
+      const subjects = Object.entries(subjectProgress).map(([name, data]) => ({
+        name,
+        progress: Math.round(((data as { total: number; count: number }).total / (data as { total: number; count: number }).count) || 0),
+        color: ((data as { total: number; count: number }).total / (data as { total: number; count: number }).count) >= 70 ? "#4CAF50" : "#FC8F12"
+      }));
+
+      setProgressData({
+        totalLessons: statsResponse.totalLessons || 0,
+        completedLessons: statsResponse.completedLessons || 0,
+        streakDays: statsResponse.streakDays || 0,
+        totalPoints: statsResponse.totalPoints || 0,
+        recentAchievements: statsResponse.achievements || [],
+        subjects,
+      });
+    } catch (error) {
+      console.error('Failed to load progress:', error);
+    } finally {
+      setLoading(false);
+    }
   };
+
+  if (loading) {
+    return (
+      <View style={[styles.container, styles.centered]}>
+        <ActivityIndicator size="large" color="#FC8F12" />
+      </View>
+    );
+  }
 
   return (
     <ScrollView style={styles.scrollView}>
@@ -219,5 +301,9 @@ const styles = StyleSheet.create({
   achievementDesc: {
     fontSize: 14,
     color: '#666',
+  },
+  centered: {
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 });

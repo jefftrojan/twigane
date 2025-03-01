@@ -7,9 +7,11 @@ import {
   FlatList,
   StatusBar,
   Platform,
+  Modal,
+  Alert,
 } from "react-native";
 import { Text, View } from "@/components/Themed";
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { LinearGradient } from "expo-linear-gradient";
 import {
   Ionicons,
@@ -17,82 +19,529 @@ import {
   FontAwesome5,
 } from "@expo/vector-icons";
 import * as Animatable from "react-native-animatable";
+import { chatService } from '../../services/chat';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const { width } = Dimensions.get("window");
-const CARD_WIDTH = width * 0.85;
-
-// Orange-based color palette
+// Define color constants
 const COLORS = {
-  primary: "#FF7D00", // Main orange
-  secondary: "#FF9E2C", // Lighter orange
-  accent: "#FF5B00", // Darker orange accent
-  background: "#FFF9F4", // Light warm background
-  cardLight: "#FFFFFF", // Card background
-  cardDark: "#FFF2E6", // Darker card background
-  text: "#333333", // Main text
-  textLight: "#8C8C8C", // Secondary text
-  success: "#67D990", // Success green
+  primary: "#FF7D00",
+  accent: "#FF9A3D",
+  background: "#FFF9F2",
+  text: "#333333",
+  textLight: "#888888",
+  cardLight: "#FFFFFF",
+  cardDark: "#FFF0E6",
 };
+
+// Define card width for flashcards
+const { width } = Dimensions.get('window');
+const CARD_WIDTH = width * 0.8;
+
+// Interface updated to match the ChatService
+interface Message {
+  _id: string;
+  text: string; // For UI display
+  sender: 'user' | 'bot';
+  type?: 'text' | 'flipcard' | 'quiz';
+  metadata?: {
+    cardFront?: string;
+    cardBack?: string;
+    category?: string;
+    points?: number;
+    correctAnswer?: string;
+  };
+  content?: string; // For API response compatibility
+  
+  // Additional fields from ChatService
+  role?: 'user' | 'assistant';
+  timestamp?: Date;
+}
+
+// Add interface for flashcard type
+interface Flashcard {
+  question: string;
+  answer: string;
+  emoji: string;
+}
+
+// Type for flipped cards state
+interface FlippedCardsState {
+  [key: number]: boolean;
+}
 
 export default function ChatScreen() {
   const [message, setMessage] = useState("");
-  const [messages, setMessages] = useState([]);
-  const [flashcards, setFlashcards] = useState([
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [chatId, setChatId] = useState<string>(""); // Will be set by startChat()
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string|null>(null);
+  const [flashcards, setFlashcards] = useState<Flashcard[]>([
     {
-      question: "What is a variable?",
-      answer: "A container for storing data values",
-      emoji: "📦",
+      question: "How do I create a flashcard?",
+      answer: "To create a flashcard, type 'make a flashcard' or 'create a flashcard'",
+      emoji: "📝",
     },
-    {
-      question: "What is a function?",
-      answer: "A reusable block of code that performs a specific task",
-      emoji: "🔄",
-    },
-    {
-      question: "What is an array?",
-      answer: "A collection of items stored at contiguous memory locations",
-      emoji: "📚",
-    },
-    {
-      question: "What is a loop?",
-      answer: "A programming structure that repeats a sequence of instructions",
-      emoji: "🔁",
-    },
+
   ]);
   const [showFlashcards, setShowFlashcards] = useState(false);
   const [currentCardIndex, setCurrentCardIndex] = useState(0);
-  const [flippedCards, setFlippedCards] = useState({});
-  const flatListRef = useRef(null);
+  const [flippedCards, setFlippedCards] = useState<FlippedCardsState>({});
+  const [isAddCardModalVisible, setAddCardModalVisible] = useState(false);
+  const [newQuestion, setNewQuestion] = useState("");
+  const [newAnswer, setNewAnswer] = useState("");
+  const [newCategory, setNewCategory] = useState("");
+  
+  // Update the ref type
+  const flatListRef = useRef<FlatList<Flashcard>>(null);
+  const scrollViewRef = useRef<ScrollView>(null);
 
-  const handleSend = () => {
-    if (message.trim()) {
-      setMessages([...messages, { text: message, sender: "user" }]);
-      // Simulate bot response
-      setTimeout(() => {
-        let botResponse = "";
-        if (message.toLowerCase().includes("help") || messages.length === 0) {
-          botResponse =
-            "Hey there! 👋 I'm your learning buddy! Want to try some cool flashcards on this topic?";
-        } else if (
-          message.toLowerCase().includes("yes") ||
-          message.toLowerCase().includes("flashcard")
-        ) {
-          botResponse =
-            "Awesome! 🎉 I've created some flashcards for you. Tap the cards icon in the top right to see them!";
-        } else {
-          botResponse =
-            "That's interesting! 🤔 Would you like to learn more about this or create some flashcards to help you remember?";
+  // Initialize chat session
+  useEffect(() => {
+    const initializeChat = async () => {
+      try {
+        setLoading(true);
+        const token = await AsyncStorage.getItem('auth_token');
+        
+        if (!token) {
+          // @ts-ignore (router is imported elsewhere in actual code)
+          router.replace('/(auth)/login');
+          return;
         }
 
-        setMessages((prev) => [
-          ...prev,
-          {
-            text: botResponse,
-            sender: "bot",
-          },
-        ]);
-      }, 1000);
-      setMessage("");
+        // Initialize chat with token
+        const chatSession = await chatService.startChat(token);
+        console.log('Chat session response:', chatSession); // Debug log
+        
+        if (!chatSession || !chatSession._id) {
+          throw new Error('Invalid chat session response');
+        }
+
+        setChatId(chatSession._id);
+        
+        if (chatSession.messages?.length > 0) {
+          const formattedMessages = chatSession.messages.map(msg => ({
+            _id: msg._id || Date.now().toString(),
+            text: msg.content || msg.text || '',
+            sender: msg.role === 'user' ? 'user' : 'bot',
+            type: msg.type || 'text',
+            metadata: msg.metadata || {},
+            timestamp: msg.timestamp ? new Date(msg.timestamp) : new Date()
+          }));
+          setMessages(formattedMessages);
+        }
+      } catch (error) {
+        console.error('Chat initialization error:', error);
+        if (error instanceof Error && error.message.toLowerCase().includes('auth')) {
+          // @ts-ignore (router is imported elsewhere in actual code)
+          router.replace('/(auth)/login');
+        } else {
+          setError('Unable to start chat session. Please try again.');
+        }
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    initializeChat();
+  }, []);
+
+  // Pattern to detect flashcard creation requests in user messages
+  const isFlashcardRequest = (text: string): boolean => {
+    const patterns = [
+      /make\s+(?:a\s+)?flashcard/i,
+      /create\s+(?:a\s+)?flashcard/i,
+      /add\s+(?:a\s+)?flashcard/i,
+      /new\s+flashcard/i,
+      /flashcard\s+for/i,
+      /remember\s+this/i
+    ];
+    
+    return patterns.some(pattern => pattern.test(text));
+  };
+
+  // Function to detect potential flashcard content in bot responses
+  const extractPotentialFlashcard = (text: string): {question: string, answer: string, category: string} | null => {
+    // Various patterns to detect Q&A formats in text
+    const patterns = [
+      // Q: ... A: ... format
+      /Q:\s*(.+?)\s*A:\s*(.+?)(?:\s*C:\s*([^.$]*))?$/im,
+      // Question: ... Answer: ... format
+      /Question:\s*(.+?)\s*Answer:\s*(.+?)(?:\s*Category:\s*([^.$]*))?$/im,
+      // Term: ... Definition: ... format
+      /Term:\s*(.+?)\s*Definition:\s*(.+?)(?:\s*Category:\s*([^.$]*))?$/im
+    ];
+    
+    for (const pattern of patterns) {
+      const match = text.match(pattern);
+      if (match) {
+        return {
+          question: match[1].trim(),
+          answer: match[2].trim(),
+          category: match[3]?.trim() || ''
+        };
+      }
+    }
+    
+    return null;
+  };
+
+  const getEmojiForCategory = (category?: string): string => {
+    if (!category) return "📚";
+  
+    const categoryEmojis: Record<string, string> = {
+      programming: "💻",
+      math: "🔢",
+      science: "🧪",
+      history: "📜",
+      language: "🗣️",
+      geography: "🌎",
+      art: "🎨",
+      music: "🎵",
+      biology: "🧬",
+      chemistry: "⚗️",
+      physics: "⚛️",
+      literature: "📚",
+      economics: "📊",
+      psychology: "🧠",
+    };
+  
+    const lowerCategory = category.toLowerCase();
+    return categoryEmojis[lowerCategory] || "📚";
+  };
+  
+  const processFlashcardData = (question: string, answer: string, category: string = '') => {
+    // Validate data
+    if (!question || !answer) return;
+    
+    // Create new flashcard
+    const newFlashcard: Flashcard = {
+      question: question,
+      answer: answer,
+      emoji: getEmojiForCategory(category)
+    };
+    
+    // Add to flashcards state
+    setFlashcards(prev => [...prev, newFlashcard]);
+    
+    // Show a notification that a flashcard was created
+    const notificationMessage: Message = {
+      _id: Date.now().toString() + '-fc-notification',
+      text: `✅ Created a new flashcard: "${question.length > 30 ? question.substring(0, 30) + '...' : question}"`,
+      sender: 'bot',
+      type: 'text',
+      timestamp: new Date()
+    };
+    
+    // Add notification to messages
+    setMessages(prev => [...prev, notificationMessage]);
+    
+    // Scroll to bottom to show the notification
+    setTimeout(() => {
+      scrollViewRef.current?.scrollToEnd({ animated: true });
+    }, 100);
+  };
+  
+  // Update your handleSend function with enhanced flashcard detection
+// Add these functions to your ChatScreen component to enable automatic flashcard creation
+
+// Enhanced pattern detection for educational content in bot responses
+const detectPotentialFlashcardContent = (text: string): Array<{question: string, answer: string, category: string}> => {
+  const results = [];
+  
+  // Look for definitions and explanations
+  const definitionPatterns = [
+    // Definition pattern: Term is defined as explanation
+    /([^.!?:]+)\s+(?:is defined as|is|means|refers to)\s+([^.!?]+[.!?])/gi,
+    
+    // Key concept pattern: X is a key concept in Y that means Z
+    /([^.!?:]+)\s+is a (?:key|important|fundamental)\s+(?:concept|term|idea)\s+(?:in|for)\s+([^.!?:]+)\s+that\s+(?:means|refers to|is defined as)\s+([^.!?]+[.!?])/gi,
+    
+    // Important fact pattern: One important fact about X is Y
+    /(?:One|An)\s+important\s+(?:fact|aspect|characteristic)\s+(?:about|of)\s+([^.!?:]+)\s+is\s+(?:that)?\s+([^.!?]+[.!?])/gi
+  ];
+  
+  // Process definition patterns
+  for (const pattern of definitionPatterns) {
+    let match;
+    while ((match = pattern.exec(text)) !== null) {
+      // Different patterns have different group positions
+      if (match.length >= 3) {
+        const term = match[1].trim();
+        let definition;
+        let category = '';
+        
+        // Handle different pattern matches
+        if (match.length >= 4) {
+          // This is the "key concept" pattern with category in group 2
+          category = match[2].trim();
+          definition = match[3].trim();
+        } else {
+          definition = match[2].trim();
+          
+          // Try to extract a subject category from the context
+          const subjects = ["math", "science", "biology", "chemistry", "physics", 
+                          "history", "geography", "literature", "language", 
+                          "programming", "computing", "economics", "psychology"];
+          
+          for (const subject of subjects) {
+            if (text.toLowerCase().includes(subject)) {
+              category = subject;
+              break;
+            }
+          }
+        }
+        
+        // Validate lengths and create flashcard if reasonable
+        if (term.length > 2 && definition.length > 10 && term.length < 100 && definition.length < 500) {
+          results.push({
+            question: term,
+            answer: definition,
+            category: category
+          });
+        }
+      }
+    }
+  }
+  
+  // Find question-answer pairs in text
+  const qaPatterns = [
+    // Q: ... A: ... format
+    /Q:\s*(.+?)\s*A:\s*(.+?)(?:\s*C:\s*([^.!?]*))?[.!?]/gi,
+    
+    // Question: ... Answer: ... format
+    /Question:\s*(.+?)\s*Answer:\s*(.+?)(?:\s*Category:\s*([^.!?]*))?[.!?]/gi,
+    
+    // Direct question with answer format
+    /([A-Z][^.!?]+\?)\s+([A-Z][^.!?]+[.!])/g
+  ];
+  
+  // Process QA patterns
+  for (const pattern of qaPatterns) {
+    let match;
+    while ((match = pattern.exec(text)) !== null) {
+      if (match.length >= 3) {
+        const question = match[1].trim();
+        const answer = match[2].trim();
+        const category = match[3] ? match[3].trim() : '';
+        
+        // Validate and add
+        if (question.length > 5 && answer.length > 5) {
+          results.push({
+            question: question,
+            answer: answer,
+            category: category
+          });
+        }
+      }
+    }
+  }
+  
+  return results;
+};
+
+// Enhanced automatic flashcard generation
+const processAutomaticFlashcards = (botMessage: Message) => {
+  // Skip processing if this is a notification or system message
+  if (botMessage._id.includes('-notification') || botMessage.text.length < 50) {
+    return;
+  }
+  
+  // First check for explicitly marked flashcard content
+  if (botMessage.type === 'flipcard' && botMessage.metadata) {
+    processFlashcardData(
+      botMessage.metadata.cardFront || '', 
+      botMessage.metadata.cardBack || '', 
+      botMessage.metadata.category || ''
+    );
+    return;
+  }
+  
+  // Check for tagged flashcard content
+  if (botMessage.text.includes('[FLASHCARD]')) {
+    const flashcardRegex = /\[FLASHCARD\]\s*Q:\s*(.*?)\s*\|\s*A:\s*(.*?)(?:\s*\|\s*C:\s*([^|]*?))?(?:\s*\|.*)?$/;
+    const match = botMessage.text.match(flashcardRegex);
+    
+    if (match) {
+      const [, question, answer, category = ''] = match;
+      
+      // Process the flashcard data
+      processFlashcardData(question.trim(), answer.trim(), category.trim());
+      
+      // Update the message to remove the flashcard markup
+      const cleanedText = botMessage.text.replace(flashcardRegex, '').trim() 
+        || "I've created a new flashcard for you!";
+        
+      // Update the message with cleaned text
+      setMessages(prev => prev.map(msg => 
+        msg._id === botMessage._id ? {...msg, text: cleanedText} : msg
+      ));
+      
+      return;
+    }
+  }
+  
+  // Try to automatically detect potential flashcard content
+  const potentialFlashcards = detectPotentialFlashcardContent(botMessage.text);
+  
+  if (potentialFlashcards.length > 0) {
+    // Take only the first one to avoid creating too many cards at once
+    const firstCard = potentialFlashcards[0];
+    
+    // Show a confirmation dialog before creating
+    Alert.alert(
+      "Create Flashcard",
+      `Would you like to create a flashcard from this?\n\nQuestion: ${firstCard.question.substring(0, 40)}${firstCard.question.length > 40 ? '...' : ''}\n\nAnswer: ${firstCard.answer.substring(0, 40)}${firstCard.answer.length > 40 ? '...' : ''}`,
+      [
+        {
+          text: "No Thanks",
+          style: "cancel"
+        },
+        { 
+          text: "Create", 
+          onPress: () => processFlashcardData(firstCard.question, firstCard.answer, firstCard.category)
+        }
+      ]
+    );
+  }
+};
+
+// Update the handleSend function to include auto flashcard processing
+const enhancedHandleSend = async () => {
+  if (message.trim() && chatId) {
+    setLoading(true);
+    const currentMessage = message;
+    setMessage("");
+    
+    // Check if this is a flashcard creation request
+    const isFlashcardCreationRequest = isFlashcardRequest(currentMessage);
+    
+    try {
+      // Create and add user message
+      const userMessage: Message = {
+        _id: Date.now().toString(),
+        text: currentMessage,
+        sender: 'user',
+        type: 'text',
+        timestamp: new Date()
+      };
+      setMessages(prev => [...prev, userMessage]);
+      
+      // Add special tag if this is a flashcard request
+      const apiMessage = isFlashcardCreationRequest 
+        ? `[FLASHCARD_REQUEST] ${currentMessage}` 
+        : currentMessage;
+
+      const response = await chatService.sendMessage(chatId, apiMessage);
+      console.log('Bot response:', response);
+      
+      // Handle the nested message structure from the backend
+      const botContent = response.message?.content || response.content;
+      const botType = response.message?.type || response.type || 'text';
+      const botMetadata = response.message?.metadata || response.metadata || {};
+      
+      if (!botContent) {
+        throw new Error('Invalid response format from assistant');
+      }
+
+      const botMessage: Message = {
+        _id: response._id || Date.now().toString(),
+        text: botContent,
+        sender: 'bot',
+        type: botType,
+        metadata: botMetadata,
+        timestamp: new Date()
+      };
+      
+      setMessages(prev => [...prev, botMessage]);
+
+      // HANDLE EXPLICITLY TYPED FLASHCARD RESPONSES
+      if (botType === 'flipcard' && botMetadata) {
+        processFlashcardData(
+          botMetadata.cardFront || '', 
+          botMetadata.cardBack || '', 
+          botMetadata.category || ''
+        );
+      }
+      
+      // HANDLE TEXT MESSAGES WITH EMBEDDED FLASHCARD DATA
+      else if (botType === 'text') {
+        // Check for explicit [FLASHCARD] tag
+        if (botContent.includes('[FLASHCARD]')) {
+          const flashcardRegex = /\[FLASHCARD\]\s*Q:\s*(.*?)\s*\|\s*A:\s*(.*?)(?:\s*\|\s*C:\s*([^|]*?))?(?:\s*\|.*)?$/;
+          const match = botContent.match(flashcardRegex);
+          
+          if (match) {
+            const [, question, answer, category = ''] = match;
+            
+            // Process the flashcard data
+            processFlashcardData(question.trim(), answer.trim(), category.trim());
+            
+            // Update the message to remove the flashcard markup
+            const cleanedText = botContent.replace(flashcardRegex, '').trim() 
+              || "I've created a new flashcard for you!";
+              
+            // Update the message with cleaned text
+            setMessages(prev => prev.map(msg => 
+              msg._id === botMessage._id ? {...msg, text: cleanedText} : msg
+            ));
+          }
+        }
+        // Look for potential Q&A patterns if this was a flashcard request
+        else if (isFlashcardCreationRequest) {
+          const potentialFlashcard = extractPotentialFlashcard(botContent);
+          
+          if (potentialFlashcard) {
+            const { question, answer, category } = potentialFlashcard;
+            processFlashcardData(question, answer, category);
+          }
+        }
+        // Try to automatically detect educational content for flashcards
+        else {
+          // Wait a bit to process auto flashcards so user can read the response first
+          setTimeout(() => {
+            processAutomaticFlashcards(botMessage);
+          }, 2000);
+        }
+      }
+
+    } catch (error) {
+      console.error('Failed to send message:', error);
+      setMessages(prev => [...prev, {
+        _id: Date.now().toString(),
+        text: "Sorry, I couldn't process your message. Please try again.",
+        sender: 'bot',
+        type: 'text',
+        timestamp: new Date()
+      }]);
+    } finally {
+      setLoading(false);
+      // Scroll to bottom after new messages
+      setTimeout(() => {
+        scrollViewRef.current?.scrollToEnd({ animated: true });
+      }, 100);
+    }
+  }
+};
+
+const handleSend = enhancedHandleSend;
+
+  const handleManualFlashcardCreation = () => {
+    if (newQuestion.trim() && newAnswer.trim()) {
+      processFlashcardData(
+        newQuestion.trim(),
+        newAnswer.trim(),
+        newCategory.trim()
+      );
+      setNewQuestion("");
+      setNewAnswer("");
+      setNewCategory("");
+      setAddCardModalVisible(false);
+    } else {
+      Alert.alert(
+        "Incomplete Flashcard",
+        "Both question and answer are required.",
+        [{ text: "OK" }]
+      );
     }
   };
 
@@ -102,7 +551,7 @@ export default function ChatScreen() {
     setFlippedCards({});
   };
 
-  const flipCard = (index) => {
+  const flipCard = (index: number) => {
     setFlippedCards((prev) => ({
       ...prev,
       [index]: !prev[index],
@@ -131,7 +580,8 @@ export default function ChatScreen() {
     }
   };
 
-  const renderFlashcard = ({ item, index }) => {
+  // Render flashcard function with proper typing
+  const renderFlashcard = ({ item, index }: { item: Flashcard; index: number }) => {
     const isFlipped = flippedCards[index] || false;
 
     return (
@@ -192,22 +642,39 @@ export default function ChatScreen() {
           <FontAwesome5 name="brain" size={22} color={COLORS.primary} />{" "}
           Learning Buddy
         </Text>
-        <TouchableOpacity
-          onPress={toggleFlashcards}
-          style={styles.flashcardButton}
-        >
-          <Animatable.View
-            animation="pulse"
-            iterationCount="infinite"
-            duration={2000}
+        <View style={styles.headerButtons}>
+          <TouchableOpacity
+            onPress={() => setAddCardModalVisible(true)}
+            style={styles.createFlashcardButton}
           >
             <MaterialCommunityIcons
-              name="cards-outline"
-              size={28}
+              name="card-plus-outline"
+              size={22}
               color={COLORS.primary}
             />
-          </Animatable.View>
-        </TouchableOpacity>
+          </TouchableOpacity>
+          {flashcards.length > 0 && (
+            <View style={styles.flashcardCounter}>
+              <Text style={styles.counterText}>{flashcards.length}</Text>
+            </View>
+          )}
+          <TouchableOpacity
+            onPress={toggleFlashcards}
+            style={styles.flashcardButton}
+          >
+            <Animatable.View
+              animation="pulse"
+              iterationCount="infinite"
+              duration={2000}
+            >
+              <MaterialCommunityIcons
+                name="cards-outline"
+                size={28}
+                color={COLORS.primary}
+              />
+            </Animatable.View>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {showFlashcards ? (
@@ -229,82 +696,108 @@ export default function ChatScreen() {
           <Text style={styles.carouselTitle}>Flip Cards to Learn!</Text>
 
           <View style={styles.carouselWrapper}>
-            <FlatList
-              ref={flatListRef}
-              data={flashcards}
-              renderItem={renderFlashcard}
-              keyExtractor={(_, index) => index.toString()}
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              pagingEnabled
-              snapToInterval={CARD_WIDTH + 20}
-              decelerationRate="fast"
-              contentContainerStyle={styles.carouselContent}
-              onMomentumScrollEnd={(e) => {
-                const index = Math.round(
-                  e.nativeEvent.contentOffset.x / (CARD_WIDTH + 20)
-                );
-                setCurrentCardIndex(index);
-              }}
-              scrollEnabled={true}
-              getItemLayout={(data, index) => ({
-                length: CARD_WIDTH + 20,
-                offset: (CARD_WIDTH + 20) * index,
-                index,
-              })}
-            />
-          </View>
-
-          <View style={styles.carouselControls}>
-            <TouchableOpacity
-              style={[
-                styles.navButton,
-                currentCardIndex === 0 && styles.navButtonDisabled,
-              ]}
-              onPress={goToPrevCard}
-              disabled={currentCardIndex === 0}
-            >
-              <Ionicons
-                name="chevron-back"
-                size={24}
-                color={
-                  currentCardIndex === 0 ? COLORS.textLight : COLORS.primary
-                }
+            {flashcards.length > 0 ? (
+              <FlatList
+                ref={flatListRef}
+                data={flashcards}
+                renderItem={renderFlashcard}
+                keyExtractor={(_, index) => index.toString()}
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                pagingEnabled
+                snapToInterval={CARD_WIDTH + 20}
+                decelerationRate="fast"
+                contentContainerStyle={styles.carouselContent}
+                onMomentumScrollEnd={(e) => {
+                  const index = Math.round(
+                    e.nativeEvent.contentOffset.x / (CARD_WIDTH + 20)
+                  );
+                  setCurrentCardIndex(index);
+                }}
+                scrollEnabled={true}
+                getItemLayout={(data, index) => ({
+                  length: CARD_WIDTH + 20,
+                  offset: (CARD_WIDTH + 20) * index,
+                  index,
+                })}
               />
-            </TouchableOpacity>
-
-            <View style={styles.pagination}>
-              {flashcards.map((_, index) => (
-                <View
-                  key={index}
-                  style={[
-                    styles.paginationDot,
-                    currentCardIndex === index && styles.paginationDotActive,
-                  ]}
+            ) : (
+              <View style={styles.noCardsContainer}>
+                <MaterialCommunityIcons 
+                  name="card-outline" 
+                  size={64} 
+                  color={COLORS.textLight} 
                 />
-              ))}
-            </View>
-
-            <TouchableOpacity
-              style={[
-                styles.navButton,
-                currentCardIndex === flashcards.length - 1 &&
-                  styles.navButtonDisabled,
-              ]}
-              onPress={goToNextCard}
-              disabled={currentCardIndex === flashcards.length - 1}
-            >
-              <Ionicons
-                name="chevron-forward"
-                size={24}
-                color={
-                  currentCardIndex === flashcards.length - 1
-                    ? COLORS.textLight
-                    : COLORS.primary
-                }
-              />
-            </TouchableOpacity>
+                <Text style={styles.noCardsText}>
+                  No flashcards yet. Create some in chat!
+                </Text>
+                <TouchableOpacity 
+                  style={styles.createCardButton}
+                  onPress={() => {
+                    toggleFlashcards();
+                    setTimeout(() => setAddCardModalVisible(true), 300);
+                  }}
+                >
+                  <Text style={styles.createCardButtonText}>
+                    Create Your First Card
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
           </View>
+
+          {flashcards.length > 0 && (
+            <View style={styles.carouselControls}>
+              <TouchableOpacity
+                style={[
+                  styles.navButton,
+                  currentCardIndex === 0 && styles.navButtonDisabled,
+                ]}
+                onPress={goToPrevCard}
+                disabled={currentCardIndex === 0}
+              >
+                <Ionicons
+                  name="chevron-back"
+                  size={24}
+                  color={
+                    currentCardIndex === 0 ? COLORS.textLight : COLORS.primary
+                  }
+                />
+              </TouchableOpacity>
+
+              <View style={styles.pagination}>
+                {flashcards.map((_, index) => (
+                  <View
+                    key={index}
+                    style={[
+                      styles.paginationDot,
+                      currentCardIndex === index && styles.paginationDotActive,
+                    ]}
+                  />
+                ))}
+              </View>
+
+              <TouchableOpacity
+                style={[
+                  styles.navButton,
+                  currentCardIndex === flashcards.length - 1 &&
+                    styles.navButtonDisabled,
+                ]}
+                onPress={goToNextCard}
+                disabled={currentCardIndex === flashcards.length - 1}
+              >
+                <Ionicons
+                  name="chevron-forward"
+                  size={24}
+                  color={
+                    currentCardIndex === flashcards.length - 1
+                      ? COLORS.textLight
+                      : COLORS.primary
+                  }
+                />
+              </TouchableOpacity>
+            </View>
+          )}
 
           {/* Additional Return to Chat Button at Bottom */}
           <TouchableOpacity
@@ -329,10 +822,11 @@ export default function ChatScreen() {
         </View>
       ) : (
         <ScrollView
+          ref={scrollViewRef}
           style={styles.chatContainer}
           contentContainerStyle={styles.chatContent}
         >
-          {messages.length === 0 && (
+          {messages.length === 0 && !loading && (
             <Animatable.View animation="fadeIn" style={styles.welcomeContainer}>
               <Animatable.View
                 animation="pulse"
@@ -346,6 +840,38 @@ export default function ChatScreen() {
                 Hi there! I'm your Learning Buddy! 👋{"\n"}
                 Ask me anything about your homework or studies!
               </Text>
+              <View style={styles.tipsContainer}>
+                <Text style={styles.tipsTitle}>Pro Tip:</Text>
+                <Text style={styles.tipsText}>
+                  Try asking me to "make a flashcard about photosynthesis" or any topic you're studying!
+                </Text>
+              </View>
+            </Animatable.View>
+          )}
+          
+          {loading && messages.length === 0 && (
+            <Animatable.View animation="fadeIn" style={styles.loadingContainer}>
+              <Animatable.View 
+                animation="pulse" 
+                iterationCount="infinite" 
+                duration={1000}
+              >
+                <MaterialCommunityIcons name="loading" size={48} color={COLORS.primary} />
+              </Animatable.View>
+              <Text style={styles.loadingText}>Starting up your learning session...</Text>
+            </Animatable.View>
+          )}
+          
+          {error && (
+            <Animatable.View animation="fadeIn" style={styles.errorContainer}>
+              <MaterialCommunityIcons name="alert-circle" size={28} color="#E53935" />
+              <Text style={styles.errorText}>{error}</Text>
+              <TouchableOpacity 
+                style={styles.retryButton}
+                onPress={() => setError(null)}
+              >
+                <Text style={styles.retryButtonText}>Dismiss</Text>
+              </TouchableOpacity>
             </Animatable.View>
           )}
 
@@ -356,32 +882,56 @@ export default function ChatScreen() {
               duration={500}
               delay={300}
             >
-              <View
-                style={[
-                  styles.message,
-                  msg.sender === "user"
-                    ? styles.userMessage
-                    : styles.botMessage,
-                ]}
-              >
-                {msg.sender === "bot" && (
-                  <View style={styles.botIcon}>
-                    <FontAwesome5 name="robot" size={16} color="#FFF" />
-                  </View>
-                )}
-                <Text
+              {/* If this is a notification message, render it differently */}
+              {msg._id.includes('-fc-notification') ? (
+                <View style={styles.flashcardCreationFeedback}>
+                  <MaterialCommunityIcons 
+                    name="card-plus" 
+                    size={24} 
+                    color={COLORS.primary} 
+                    style={styles.feedbackIcon}
+                  />
+                  <Text style={styles.feedbackText}>{msg.text}</Text>
+                </View>
+              ) : (
+                <View
                   style={[
-                    styles.messageText,
+                    styles.message,
                     msg.sender === "user"
-                      ? styles.userMessageText
-                      : styles.botMessageText,
+                      ? styles.userMessage
+                      : styles.botMessage,
                   ]}
                 >
-                  {msg.text}
-                </Text>
-              </View>
+                  {msg.sender === "bot" && (
+                    <View style={styles.botIcon}>
+                      <FontAwesome5 name="robot" size={16} color="#FFF" />
+                    </View>
+                  )}
+                  <Text
+                    style={[
+                      styles.messageText,
+                      msg.sender === "user"
+                        ? styles.userMessageText
+                        : styles.botMessageText,
+                    ]}
+                  >
+                    {msg.text}
+                  </Text>
+                </View>
+              )}
             </Animatable.View>
           ))}
+          
+          {loading && messages.length > 0 && (
+            <Animatable.View 
+              animation="fadeIn" 
+              style={styles.typingIndicator}
+            >
+              <View style={styles.typingDot}></View>
+              <View style={[styles.typingDot, {animationDelay: '0.2s'}]}></View>
+              <View style={[styles.typingDot, {animationDelay: '0.4s'}]}></View>
+            </Animatable.View>
+          )}
         </ScrollView>
       )}
 
@@ -396,7 +946,7 @@ export default function ChatScreen() {
         <TouchableOpacity
           onPress={handleSend}
           style={styles.sendButton}
-          disabled={!message.trim()}
+          disabled={!message.trim() || loading}
         >
           <LinearGradient
             colors={[COLORS.primary, COLORS.accent]}
@@ -408,6 +958,66 @@ export default function ChatScreen() {
           </LinearGradient>
         </TouchableOpacity>
       </View>
+
+      {/* Modal for creating flashcards manually */}
+      <Modal
+        visible={isAddCardModalVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setAddCardModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Create New Flashcard</Text>
+            
+            <Text style={styles.inputLabel}>Question/Front:</Text>
+            <TextInput
+              style={styles.modalInput}
+              value={newQuestion}
+              onChangeText={setNewQuestion}
+              placeholder="Enter question or term"
+              multiline
+            />
+            
+            <Text style={styles.inputLabel}>Answer/Back:</Text>
+            <TextInput
+              style={styles.modalInput}
+              value={newAnswer}
+              onChangeText={setNewAnswer}
+              placeholder="Enter answer or definition"
+              multiline
+            />
+            
+            <Text style={styles.inputLabel}>Category (optional):</Text>
+            <TextInput
+              style={styles.modalInput}
+              value={newCategory}
+              onChangeText={setNewCategory}
+              placeholder="e.g., Math, Science, History"
+            />
+            
+            <View style={styles.modalButtons}>
+              <TouchableOpacity
+                style={styles.cancelButton}
+                onPress={() => setAddCardModalVisible(false)}
+              >
+                <Text style={styles.cancelButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity
+                style={[
+                  styles.createButton,
+                  (!newQuestion.trim() || !newAnswer.trim()) && styles.createButtonDisabled
+                ]}
+                onPress={handleManualFlashcardCreation}
+                disabled={!newQuestion.trim() || !newAnswer.trim()}
+              >
+                <Text style={styles.createButtonText}>Create</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -443,6 +1053,28 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: COLORS.text,
   },
+  headerButtons: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  flashcardCounter: {
+    backgroundColor: COLORS.primary,
+    borderRadius: 12,
+    width: 24,
+    height: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 8
+  },
+  counterText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: 'bold'
+  },
+  createFlashcardButton: {
+    padding: 8,
+    marginRight: 8,
+  },
   flashcardButton: {
     padding: 8,
   },
@@ -472,6 +1104,25 @@ const styles = StyleSheet.create({
     color: COLORS.text,
     textAlign: "center",
     lineHeight: 24,
+    marginBottom: 20,
+  },
+  tipsContainer: {
+    backgroundColor: "rgba(255, 125, 0, 0.1)",
+    padding: 16,
+    borderRadius: 12,
+    width: '90%',
+    borderLeftWidth: 3,
+    borderLeftColor: COLORS.primary,
+  },
+  tipsTitle: {
+    fontWeight: 'bold',
+    color: COLORS.primary,
+    marginBottom: 4,
+  },
+  tipsText: {
+    color: COLORS.text,
+    fontSize: 14,
+    lineHeight: 20,
   },
   carouselContainer: {
     flex: 1,
@@ -618,6 +1269,48 @@ const styles = StyleSheet.create({
   buttonIcon: {
     marginRight: 8,
   },
+  noCardsContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    width: CARD_WIDTH,
+    alignSelf: 'center',
+  },
+  noCardsText: {
+    fontSize: 16,
+    color: COLORS.textLight,
+    textAlign: 'center',
+    marginVertical: 16,
+  },
+  createCardButton: {
+    backgroundColor: COLORS.primary,
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 20,
+    marginTop: 10,
+  },
+  createCardButtonText: {
+    color: '#FFFFFF',
+    fontWeight: 'bold',
+  },
+  flashcardCreationFeedback: {
+    backgroundColor: 'rgba(255, 125, 0, 0.1)',
+    padding: 12,
+    borderRadius: 12,
+    margin: 8,
+    borderLeftWidth: 3,
+    borderLeftColor: COLORS.primary,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  feedbackIcon: {
+    marginRight: 8,
+  },
+  feedbackText: {
+    color: COLORS.text,
+    fontSize: 14,
+    flex: 1,
+  },
   message: {
     maxWidth: "85%",
     padding: 14,
@@ -672,6 +1365,26 @@ const styles = StyleSheet.create({
     fontSize: 16,
     lineHeight: 22,
   },
+  typingIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    backgroundColor: COLORS.primary,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 20,
+    borderBottomLeftRadius: 4,
+    marginVertical: 8,
+    marginLeft: 16,
+  },
+  typingDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#FFFFFF',
+    marginHorizontal: 2,
+    opacity: 0.7,
+  },
   inputContainer: {
     flexDirection: "row",
     padding: 12,
@@ -695,4 +1408,126 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     overflow: "hidden",
   },
+  loadingContainer: {
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 20,
+    marginVertical: 40,
+  },
+  loadingText: {
+    fontSize: 16,
+    color: COLORS.text,
+    marginTop: 12,
+    textAlign: "center",
+  },
+  errorContainer: {
+    backgroundColor: "#FFEBEE",
+    padding: 16,
+    borderRadius: 12,
+    margin: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    borderLeftWidth: 4,
+    borderLeftColor: "#E53935",
+  },
+  errorText: {
+    color: "#D32F2F",
+    fontSize: 14,
+    marginVertical: 8,
+    textAlign: "center",
+  },
+  retryButton: {
+    backgroundColor: "#FFFFFF",
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 20,
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: "#D32F2F",
+  },
+  retryButtonText: {
+    color: "#D32F2F",
+    fontWeight: "bold",
+    fontSize: 12,
+  },
+  // Modal styles for flashcard creation
+  modalOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 1000,
+  },
+  modalContent: {
+    backgroundColor: '#FFF',
+    borderRadius: 16,
+    padding: 20,
+    width: '80%',
+    maxWidth: 400,
+    shadowColor: "#000",
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: COLORS.primary,
+    marginBottom: 16,
+    textAlign: 'center',
+  },
+  inputLabel: {
+    fontSize: 14,
+    color: COLORS.text,
+    marginBottom: 4,
+    fontWeight: '500',
+  },
+  modalInput: {
+    borderWidth: 1,
+    borderColor: 'rgba(0, 0, 0, 0.1)',
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 16,
+    backgroundColor: 'rgba(255, 240, 230, 0.3)',
+  },
+  modalButtons: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 8,
+  },
+  cancelButton: {
+    padding: 12,
+    borderRadius: 8,
+    backgroundColor: 'rgba(0, 0, 0, 0.1)',
+    flex: 1,
+    marginRight: 8,
+    alignItems: 'center',
+  },
+  cancelButtonText: {
+    color: COLORS.text,
+    fontWeight: '500',
+  },
+  createButton: {
+    padding: 12,
+    borderRadius: 8,
+    backgroundColor: COLORS.primary,
+    flex: 1,
+    marginLeft: 8,
+    alignItems: 'center',
+  },
+  createButtonDisabled: {
+    backgroundColor: 'rgba(255, 125, 0, 0.3)',
+  },
+  createButtonText: {
+    color: '#FFF',
+    fontWeight: 'bold',
+  }
 });
